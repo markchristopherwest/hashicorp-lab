@@ -5,12 +5,12 @@ function cleanup() {
   docker-compose rm -fs 
   popd
   # Purge the Environment
-  sudo chown -Rf ${USER}:${USER} ./consul/data/
+  sudo chown -Rf ${USER}:wheel ./consul/data/
   rm -rf ./consul/data/client/*
   rm -rf ./consul/data/server/*
-  sudo chown -Rf ${USER}:${USER} ./database/postgres/db
+  sudo chown -Rf ${USER}:wheel ./databases/postgres/db
   rm -rf ./databases/postgres/db/*
-  sudo chown -Rf ${USER}:${USER} ./gogs/data
+  sudo chown -Rf ${USER}:wheel ./gogs/data
   rm -rf ./gogs/data/*
   rm -rf ./terraform/.terraform
   rm -rf ./terraform/.terraform.lock.hcl
