@@ -1,0 +1,293 @@
+# Copyright (c) HashiCorp, Inc.
+# SPDX-License-Identifier: MPL-2.0
+
+version: "3.8"
+
+services:
+  # automatically put everything together
+  auto:
+    expose:
+      - "8200"
+    image: "ubuntu:24.04"
+    container_name: setup
+    depends_on:
+      - vault
+    network_mode: "bridge"
+    entrypoint: [ "sh", "-c", "/scripts/helper.sh"] 
+    volumes:
+      - type: bind
+        source: ${PWD}/../scripts
+        target: /scripts
+      - type: bind
+        source: ${PWD}/../terraform
+        target: /terraform
+      - type: bind
+        source: ${PWD}/../secrets
+        target: /secrets
+    healthcheck:
+      test: "exit 0"
+
+  # gogs provides a VCS for TFE
+  gogs:
+    image: gogs/gogs:latest
+    container_name: gogs
+    restart: always
+    ports:
+      - "10022:22"
+      - "3000:3000"
+    links:
+      - postgres
+    environment:
+      - "RUN_CROND=true"
+    volumes:
+      - type: bind
+        source: ${PWD}/../gogs/data
+        target: /data
+    depends_on:
+      - postgres
+
+  # OpenLDAP provides AuthMethod for Vault & Boundary
+  openldap:
+    image: osixia/openldap:latest
+    container_name: openldap
+    environment:
+      LDAP_LOG_LEVEL: "256"
+      LDAP_ORGANISATION: "Foo Inc."
+      LDAP_DOMAIN: "foo.local"
+      LDAP_BASE_DN: ""
+      LDAP_ADMIN_PASSWORD: "admin"
+      LDAP_CONFIG_PASSWORD: "config"
+      LDAP_READONLY_USER: "false"
+      #LDAP_READONLY_USER_USERNAME: "readonly"
+      #LDAP_READONLY_USER_PASSWORD: "readonly"
+      LDAP_RFC2307BIS_SCHEMA: "false"
+      LDAP_BACKEND: "mdb"
+      LDAP_TLS: "true"
+      LDAP_TLS_CRT_FILENAME: "ldap.crt"
+      LDAP_TLS_KEY_FILENAME: "ldap.key"
+      LDAP_TLS_DH_PARAM_FILENAME: "dhparam.pem"
+      LDAP_TLS_CA_CRT_FILENAME: "ca.crt"
+      LDAP_TLS_ENFORCE: "false"
+      LDAP_TLS_CIPHER_SUITE: "SECURE256:-VERS-SSL3.0"
+      LDAP_TLS_VERIFY_CLIENT: "demand"
+      LDAP_REPLICATION: "false"
+      #LDAP_REPLICATION_CONFIG_SYNCPROV: 'binddn="cn=admin,cn=config" bindmethod=simple credentials="$$LDAP_CONFIG_PASSWORD" searchbase="cn=config" type=refreshAndPersist retry="60 +" timeout=1 starttls=critical'
+      #LDAP_REPLICATION_DB_SYNCPROV: 'binddn="cn=admin,$$LDAP_BASE_DN" bindmethod=simple credentials="$$LDAP_ADMIN_PASSWORD" searchbase="$$LDAP_BASE_DN" type=refreshAndPersist interval=00:00:00:10 retry="60 +" timeout=1 starttls=critical'
+      #LDAP_REPLICATION_HOSTS: "#PYTHON2BASH:['ldap://ldap.example.org','ldap://ldap2.example.org']"
+      KEEP_EXISTING_CONFIG: "false"
+      LDAP_REMOVE_CONFIG_AFTER_SETUP: "true"
+      LDAP_SSL_HELPER_PREFIX: "ldap"
+    tty: true
+    stdin_open: true
+    volumes:
+      - /var/lib/ldap
+      - /etc/ldap/slapd.d
+      - /container/service/slapd/assets/certs/
+    ports:
+      - "30389:389"
+      - "30636:636"
+
+  # Web Based GUI for browsing LDAP
+  phpldapadmin:
+    image: osixia/phpldapadmin:latest
+    container_name: phpldapadmin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: "openldap"
+      PHPLDAPADMIN_HTTPS: "false"
+    ports:
+      - "8080:80"
+    depends_on:
+      - openldap
+
+  # A touch of Consul
+  consul:
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    image: "hashicorp/consul:latest"
+    container_name: consul
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - type: bind
+        source: ${PWD}/../consul/data/server
+        target: /opt/consul/data
+      - type: bind
+        source: ${PWD}/../consul/server.hcl
+        target: /consul/config/consul-server.hcl
+    entrypoint: [ "sh", "-c", "consul agent -server -config-file=/consul/config/consul-server.hcl -log-level=debug"] 
+
+  # Sprinkle Nomad
+  nomad:
+    ports:
+      - "4646:4646"
+    image: "hashicorp/nomad:latest"
+    container_name: nomad
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - 'NOMAD_ADDR=http://127.0.0.1:4646'
+    volumes:
+      - type: bind
+        source: ${PWD}/../nomad/server.hcl
+        target: /opt/nomad/config/nomad-server.hcl
+    entrypoint: [ "sh", "-c", "nomad agent -config /opt/nomad/config/nomad-server.hcl -log-level=trace"] 
+    depends_on:
+      - consul
+
+
+
+  # Secure with Vault
+  vault:
+    ports:
+      - "5696:5696"
+      - "8200:8200"
+      - "8201:8201"
+    image: "hashicorp/vault:latest"
+    container_name: vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - 'VAULT_ADDR=http://127.0.0.1:8200'
+      - 'VAULT_DEV_ROOT_TOKEN_ID=root'
+      - 'VAULT_SKIP_VERIFY=true'
+    volumes:
+      - type: bind
+        source: ${PWD}/../vault/server.hcl
+        target: /opt/vault/config/vault-server.hcl
+    entrypoint: [ "sh", "-c", "vault server -config /opt/vault/config/vault-server.hcl -log-level=trace"] 
+  
+  # Run Vault Agent
+  vault-agent:
+    ports:
+      - "8210:8200"
+    image: "hashicorp/vault:latest"
+    container_name: vault-agent
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - 'VAULT_ADDR=http://127.0.0.1:8200'
+      - 'VAULT_SKIP_VERIFY=true'
+    volumes:
+      - type: bind
+        source: ${PWD}/../vault/agent.hcl
+        target: /opt/vault/config/vault-agent.hcl
+    entrypoint: [ "sh", "-c", "vault agent -config /opt/vault/config/vault-agent.hcl -log-level=trace"] 
+    depends_on:
+      - vault
+
+  # Postgres for Boundary & Vault
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=boundary
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+
+  # Postgres Setup
+  postgres-init:
+    image: hashicorp/boundary:latest
+    container_name: boundary-init
+    command: ["database", "init", "-config", "/boundary/controller.hcl"]
+    volumes:
+      - "${PWD}/../boundary/controller.hcl:/boundary/controller.hcl:ro,z"
+    environment:
+      - BOUNDARY_PG_URL=postgresql://postgres:postgres@postgres/boundary?sslmode=disable
+    cap_add:
+      - IPC_LOCK
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pgadmin:
+    container_name: pgadmin
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+       - ${PWD}/../databases/postgres/pgadmin:/var/lib/pgadmin
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    restart: unless-stopped
+
+
+  boundary-controller:
+    image: hashicorp/boundary:latest
+    container_name: boundary-controller
+    command: ["server", "-config", "/boundary/boundary.hcl"]
+    volumes:
+      - "${PWD}/../boundary/:/boundary/"
+    ports:
+      - "9200:9200"
+    environment:
+      - BOUNDARY_PG_URL=postgresql://postgres:postgres@postgres/boundary?sslmode=disable
+      - HOSTNAME=boundary
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-O-", "http://127.0.0.1:9200"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+
+
+  boundary-worker:
+    image: hashicorp/boundary:0.18.0
+    container_name: boundary-worker
+    command: ["server", "-config", "/boundary/worker.hcl"]
+    volumes:
+      - "${PWD}/../boundary/worker.hcl:/boundary/worker.hcl"
+    ports:
+      - "9201:9201"
+    environment:
+      - BOUNDARY_PG_URL=postgresql://postgres:postgres@postgres/boundary?sslmode=disable
+      - HOSTNAME=boundary
+    depends_on:
+      - boundary-controller
+    healthcheck:
+      test: ["CMD", "wget", "-O-", "http://127.0.0.1:9201"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+# Boundary controller is the last service to start and may not be fully up
+# by the time the docker compose command returns, so we force a wait by
+# depending a placeholder on the controller healthcheck
+  wait:
+    image: busybox:latest
+    container_name: busybox
+    command: >
+      sh -c "apt-get install -y postgresql-client &&
+             psql -w -U postgres -d boundary -c SELECT &&
+             psql -w -U postgres -d boundary -c SELECT
+             "
+    depends_on:
+      - boundary-worker
+
+# # Private Database Targets - not exposed to host network, only available via Boundary
+#   cassandra:
+#     image: bitnami/cassandra:latest
+
+#   mysql:
+#     image: mariadb
+#     environment:
+#       - 'MYSQL_ROOT_PASSWORD=my-secret-pw'
+
+#   redis:
+#     image: redis
+
+#   mssql:
+#     image: mcr.microsoft.com/mssql/server:2017-CU8-ubuntu
+#     environment:
+#       - 'ACCEPT_EULA=Y'
+#       - 'SA_PASSWORD=yourStrong(!)Password'
