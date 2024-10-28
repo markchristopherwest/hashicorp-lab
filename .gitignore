@@ -81,12 +81,12 @@ id-*
 
 
 databases/
-gogs/data/*
+gogs/data/
 ldap/*
-mysql/db
-postgres/db
+mysql/db/
+postgres/db/
 secrets/*.*
-consul/data/** */
+consul/data/
 
 
 terraform/.terraform

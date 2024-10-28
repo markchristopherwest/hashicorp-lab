@@ -23,19 +23,20 @@ which vault
 
 # export VAULT_ROOT_TOKEN="root"
 # export VAULT_TOKEN=$VAULT_ROOT_TOKEN
-export VAULT_ADDR="http://host.docker.internal:8200"
+export VAULT_ADDR="http://172.17.0.1:8200"
 export VAULT_SKIP_VERIFY=true
 # vault login root
 
 echo "Initializing Vault"
-vault operator init > /secrets/vault.txt
-# cat /secrets/vault.txt > /secrets/vault.txt
+cd ..
+cd secrets
+vault operator init > vault.txt
 
-echo "Sourcing Vault"
-export VAULT_TOKEN=$(cat /secrets/vault.txt | grep '^Initial' | awk '{print $4}')
-export UNSEAL_1=$(cat /secrets/vault.txt | grep '^Unseal Key 1' | awk '{print $4}')
-export UNSEAL_2=$(cat /secrets/vault.txt | grep '^Unseal Key 2' | awk '{print $4}')
-export UNSEAL_3=$(cat /secrets/vault.txt | grep '^Unseal Key 3' | awk '{print $4}')
+export VAULT_TOKEN=$(cat vault.txt | grep '^Initial' | awk '{print $4}')
+export UNSEAL_1=$(cat vault.txt | grep '^Unseal Key 1' | awk '{print $4}')
+export UNSEAL_2=$(cat vault.txt | grep '^Unseal Key 2' | awk '{print $4}')
+export UNSEAL_3=$(cat vault.txt | grep '^Unseal Key 3' | awk '{print $4}')
+
 
 echo "Unsealing Vault"
 vault operator unseal $UNSEAL_1
@@ -44,6 +45,8 @@ vault operator unseal $UNSEAL_3
 
 # Handle Vault Login
 export ROOT_TOKEN=${VAULT_TOKEN}
+cd ..
+cd scripts
 vault login ${ROOT_TOKEN} >> helper.log
 
 # TF it

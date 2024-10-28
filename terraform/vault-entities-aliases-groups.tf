@@ -377,3 +377,9 @@ output "vault_oidc_client_secret" {
 #   value     = vault_token.boundary.client_token
 #   sensitive = true
 # }
+
+resource "vault_ldap_auth_backend_user" "admin" {
+    username = "admin"
+    policies = ["admin", "default"]
+    backend  = vault_ldap_auth_backend.ldap.path
+}
