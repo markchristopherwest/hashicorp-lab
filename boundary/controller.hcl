@@ -4,36 +4,36 @@
 disable_mlock = true
 
 controller {
-  name = "docker-controller"
+  name = "boundary-controller"
   description = "A controller for a docker demo!"
   database {
       url = "env://BOUNDARY_PG_URL"
   }
 }
 
-worker {
-  name = "docker-worker"
-  description = "A worker for a docker demo"
-  // public address 127 because we're portforwarding the connection from docker to host machine.
-  // So for the client running in host machine, the connection ip is 127
-  // If you're using this in a remote server, then the ip should be changed to machine public address, so that your local machine can communicate to this worker.
-  public_addr = "127.0.0.1"
-}
+# worker {
+#   name = "docker-worker"
+#   description = "A worker for a docker demo"
+#   // public address 127 because we're portforwarding the connection from docker to host machine.
+#   // So for the client running in host machine, the connection ip is 127
+#   // If you're using this in a remote server, then the ip should be changed to machine public address, so that your local machine can communicate to this worker.
+#   public_addr = "127.0.0.1"
+# }
 
 listener "tcp" {
-  address = "boundary"
+  address = "127.0.0.1:9200"
   purpose = "api"
   tls_disable = true 
 }
 
 listener "tcp" {
-  address = "boundary"
+  address = "127.0.0.1:9201"
   purpose = "cluster"
   tls_disable = true 
 }
 
 listener "tcp" {
-	address = "boundary"
+  address = "127.0.0.1:9202"
 	purpose = "proxy"
 	tls_disable = true
 }

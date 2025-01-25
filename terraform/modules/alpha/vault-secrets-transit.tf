@@ -2,7 +2,7 @@
 resource "vault_mount" "transit" {
   path                      = "transit"
   type                      = "transit"
-  description = "Transit Secrets Engine for Foo"
+  description               = "Transit Secrets Engine for Foo"
   default_lease_ttl_seconds = 3600
   max_lease_ttl_seconds     = 86400
 }
@@ -19,7 +19,37 @@ resource "vault_transit_secret_backend_key" "key" {
   name               = "my_key"
   deletion_allowed   = true
   auto_rotate_period = 0
-  exportable = true
+  exportable         = true
+}
+
+# https://registry.terraform.io/providers/hashicorp/vault/latest/docs/resources/transit_secret_backend_key#auto_rotate_period
+resource "vault_transit_secret_backend_key" "boundary_recovery" {
+  backend            = vault_mount.transit.path
+  name               = "boundary_recovery"
+  type               = "ecdsa-p256"
+  deletion_allowed   = true
+  auto_rotate_period = 0
+  exportable         = true
+}
+
+# https://registry.terraform.io/providers/hashicorp/vault/latest/docs/resources/transit_secret_backend_key#auto_rotate_period
+resource "vault_transit_secret_backend_key" "boundary_root" {
+  backend            = vault_mount.transit.path
+  name               = "boundary_root"
+  type               = "ecdsa-p256"
+  deletion_allowed   = true
+  auto_rotate_period = 0
+  exportable         = true
+}
+
+# https://registry.terraform.io/providers/hashicorp/vault/latest/docs/resources/transit_secret_backend_key#auto_rotate_period
+resource "vault_transit_secret_backend_key" "boundary_worker_auth" {
+  backend            = vault_mount.transit.path
+  name               = "boundary_worker_auth"
+  type               = "ecdsa-p256"
+  deletion_allowed   = true
+  auto_rotate_period = 0
+  exportable         = true
 }
 
 # https://registry.terraform.io/providers/hashicorp/vault/latest/docs/data-sources/transit_encrypt

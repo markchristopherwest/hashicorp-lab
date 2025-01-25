@@ -1,3 +1,9 @@
+
+
+
+data "template_file" "nomad_config_server" {
+  template = <<-EOT
+# https://www.linkedin.com/in/markchristopherwest/
 # https://learn.hashicorp.com/tutorials/nomad/multiregion-deployments?in=nomad/enterprise
 data_dir  = "/var/lib/nomad"
 bind_addr  = "0.0.0.0"
@@ -25,13 +31,6 @@ server {
       sysbatch_scheduler_enabled = true
     }
   }
-}
-
-telemetry {
- collection_interval = "5s",
- publish_allocation_metrics = true,
- publish_node_metrics = true,
- prometheus_metrics = true
 }
 
 
@@ -64,11 +63,23 @@ vault {
 #tls {
 #  http = true
 #  rpc  = true
-#  ca_file   = "/opt/nomad/tls/bundle-$domain.crt"
-#  cert_file = "/opt/${product_name}/tls/server-$product_name.$domain.crt"
-#  key_file  = "/opt/${product_name}/tls/server-$product_name.$domain.key"
+#  ca_file   = "/opt/nomad/tls/bundle.crt"
+#  cert_file = "/opt/nomad/tls/server.crt"
+#  key_file  = "/opt/nomad/tls/server.key"
 #}
 # https://learn.hashicorp.com/tutorials/nomad/access-control-tokens?in=nomad/access-control
 acl {
   enabled = true
+}
+
+  EOT
+  vars = {
+
+  }
+}
+
+
+resource "local_file" "nomad_config_server" {
+  content  = data.template_file.nomad_config_server.rendered
+  filename = "${path.module}/../secrets/config-nomad-server.hcl"
 }

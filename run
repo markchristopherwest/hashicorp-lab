@@ -1,51 +1,120 @@
 #!/bin/bash
 
-function cleanup() {
+function do_cleanup() {
+  do_refresh
+  exit 0
+}
+
+
+function do_minio() {
+  pushd minio
+  echo 'Waiting for MinIO instance to be healthy...'
+  healthcheck_retries=10
+  healthcheck_interval=1 # seconds
+  healthy=false
+  for i in $(seq 1 $healthcheck_retries);
+  do
+    if [ $((i % 5)) = 0 ]; then
+      echo '  Still waiting...'
+    fi
+    if [ $(curl -Is -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9000/minio/health/live) == '200' ]; then
+      healthy=true
+      break
+    fi
+    sleep $healthcheck_interval
+  done
+  if [ "$healthy" = false ]; then
+    die "minio instance not healthy after $healthcheck_retries retries"
+  fi
+  echo 'Done!'
+
+  sleep 2 # Despite doing a healthcheck, it seems like we still have to wait for instance to stabilize.
+  create_service_account $minio_root_user $minio_root_pw
+
+  echo '###########################################################'
+  echo 'MinIO instance information:'
+  echo "  Container Name:      $container_name"
+  echo "  Root Login Username: $minio_root_user"
+  echo "  Root Login Password: $minio_root_pw"
+  if [ -n "${MINIO_ACCESS_KEY}" ]; then 
+    echo "  Service Account Access Key: $MINIO_ACCESS_KEY"
+  fi
+  if [ -n "${MINIO_SECRET_KEY}" ]; then
+    echo "  Service Account Secret Key: $MINIO_SECRET_KEY"
+  fi
+  echo 'You can use the root username and password as access key'
+  echo 'and secret key respectively (not in the plugin though).'
+  echo '###########################################################'
+  popd
+}
+
+function do_refresh() {
   pushd docker
   docker-compose rm -fs 
   popd
   # Purge the Environment
-  sudo chown -Rf ${USER}:wheel ./consul/data/
+  # sudo -i
+  chown -Rf ${USER}:wheel ./consul/data/
   rm -rf ./consul/data/client/*
   rm -rf ./consul/data/server/*
-  sudo chown -Rf ${USER}:wheel ./databases/postgres/db
+  chown -Rf ${USER}:wheel ./databases/postgres/db
   rm -rf ./databases/postgres/db/*
-  sudo chown -Rf ${USER}:wheel ./gogs/data
-  rm -rf ./gogs/data/*
+  # chown -Rf ${USER}:wheel ./gogs/data
+  # rm -rf ./gogs/data/*
   rm -rf ./terraform/.terraform
   rm -rf ./terraform/.terraform.lock.hcl
   rm -rf ./terraform/terraform.tfstate
+  rm -rf ./scripts/*.log
   rm -rf ./secrets/*.pem
-  exit 0
+  rm -rf ./secrets/*.hcl
+  rm -rf ./secrets/*.yaml
+  rm -rf ./terraform/plan.json
 }
 
-trap cleanup SIGKILL SIGINT
-
-function init_docker() {
+function do_docker() {
   pushd docker
   docker-compose up -d
   popd
 }
 
-function init_terraform() {
-  pushd terraform
-  tofu init
-  tofu apply -auto-approve
-  cd ..
+function do_vault() {
+  pushd secrets
+  export VAULT_ADDR="http://127.0.0.1:8200"
+  export VAULT_SKIP_VERIFY=true
+  # vault login root
+  echo "Hello $USER, let's get your Vault setup, shall we?"
+  echo "Initializing Vault"
+  vault operator init > vault.txt
+  # cat vault.txt > vault.txt
+
+  echo "Sourcing Vault"
+  export VAULT_TOKEN=$(cat vault.txt | grep '^Initial' | awk '{print $4}')
+  export UNSEAL_1=$(cat vault.txt | grep '^Unseal Key 1' | awk '{print $4}')
+  export UNSEAL_2=$(cat vault.txt | grep '^Unseal Key 2' | awk '{print $4}')
+  export UNSEAL_3=$(cat vault.txt | grep '^Unseal Key 3' | awk '{print $4}')
+
+  echo "Unsealing Vault"
+  vault operator unseal $UNSEAL_1
+  vault operator unseal $UNSEAL_2
+  vault operator unseal $UNSEAL_3
+
+  # Handle Vault Login
+  export ROOT_TOKEN=${VAULT_TOKEN}
+  vault login ${ROOT_TOKEN}
   popd
 }
 
 # Test with login to Boundary after provisioning
-function login() {
+function boundary_login() {
   export PASS=foofoofoo
   boundary authenticate password -login-name jeff -password env://PASS -auth-method-id $(primary_org_ampw)
 }
 
-function primary_org_id() {
+function boundary_primary_org_id() {
   strip $(boundary scopes list -keyring-type=none -format json | jq  -c '.items[] | select(.name | contains("primary")) | .id')
 }
 
-function primary_org_ampw() {
+function boundary_primary_org_ampw() {
   strip $(boundary auth-methods list -keyring-type=none -scope-id $(primary_org_id) -format json | jq -c '.items[].id') 
 }
 
@@ -57,20 +126,36 @@ for arg in "$@"
 do
     case $arg in
         all)
-        init_docker
-        # init_terraform
+        all
+        do_docker
         shift
         ;;
-        login)
-        login
+        docker)
+        do_docker
+        shift
+        ;;
+        terraform)
+        do_terraform
+        shift
+        ;;
+        vault)
+        do_vault
         shift
         ;;
         cleanup)
-        cleanup
+        do_cleanup
+        shift
+        ;;
+        minio)
+        do_minio
+        shift
+        ;;
+        refresh)
+        do_refresh
         shift
         ;;
         *)
-        echo "cmd not found: try 'all', 'login', or 'cleanup'"
+        echo "cmd not found: try 'all', 'docker', 'terraform' or 'cleanup'"
         shift
         ;;
     esac

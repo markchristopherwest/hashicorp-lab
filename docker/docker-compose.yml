@@ -1,18 +1,29 @@
-# Copyright (c) HashiCorp, Inc.
-# SPDX-License-Identifier: MPL-2.0
-
-version: "3.8"
+# Settings and configurations that are common for all containers
+x-minio-common: &minio-common
+  image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+  command: server --console-address ":9001" http://minio{1...4}/data{1...2}
+  expose:
+    - "9000"
+    - "9001"
+  # environment:
+    # MINIO_ROOT_USER: minioadmin
+    # MINIO_ROOT_PASSWORD: minioadmin
+  healthcheck:
+    test: ["CMD", "mc", "ready", "local"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
 
 services:
   # automatically put everything together
   auto:
     expose:
       - "8200"
-    image: "ubuntu:24.04"
+    image: "ubuntu:jammy"
     container_name: setup
     depends_on:
       - vault
-    network_mode: "bridge"
+    # network_mode: "bridge"
     entrypoint: [ "sh", "-c", "/scripts/helper.sh"] 
     volumes:
       - type: bind
@@ -26,15 +37,30 @@ services:
         target: /secrets
     healthcheck:
       test: "exit 0"
+      
+  # visualize via Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+     - GF_SERVER_ROOT_URL=http://my.grafana.server/
+     - GF_INSTALL_PLUGINS=grafana-clock-panel, grafana-simple-json-datasource
+    ports:
+     - '3000:3000'
+    volumes:
+      - "./../grafana/datasource.yaml:/etc/grafana/provisioning/datasources/prometheus_datasource.yaml"
+      - ./../grafana/dashboard.yaml:/etc/grafana/provisioning/dashboards/main.yaml
+      - ./../grafana/dashboards:/var/lib/grafana/dashboards
 
-  # gogs provides a VCS for TFE
+  # source control via GOGS
   gogs:
     image: gogs/gogs:latest
     container_name: gogs
     restart: always
     ports:
       - "10022:22"
-      - "3000:3000"
+      - "3001:3000"
     links:
       - postgres
     environment:
@@ -99,6 +125,13 @@ services:
     depends_on:
       - openldap
 
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./../prometheus/prometheus.yaml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
   # A touch of Consul
   consul:
     ports:
@@ -116,6 +149,9 @@ services:
         source: ${PWD}/../consul/server.hcl
         target: /consul/config/consul-server.hcl
     entrypoint: [ "sh", "-c", "consul agent -server -config-file=/consul/config/consul-server.hcl -log-level=debug"] 
+    depends_on:
+      - auto
+      - vault
 
   # Sprinkle Nomad
   nomad:
@@ -133,9 +169,63 @@ services:
         target: /opt/nomad/config/nomad-server.hcl
     entrypoint: [ "sh", "-c", "nomad agent -config /opt/nomad/config/nomad-server.hcl -log-level=trace"] 
     depends_on:
+      - auto
       - consul
+      - vault
+      
+  nomad-agent:
+    ports:
+      - "4647:4646"
+    image: "hashicorp/nomad:latest"
+    container_name: nomad-agent
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - 'NOMAD_ADDR=http://127.0.0.1:4646'
+    volumes:
+      - type: bind
+        source: ${PWD}/../nomad/agent.hcl
+        target: /opt/nomad/config/nomad-agent.hcl
+    entrypoint: [ "sh", "-c", "nomad agent -config /opt/nomad/config/nomad-agent.hcl -log-level=trace"] 
+    depends_on:
+      - consul
+      - nomad
 
-
+  # tfe:
+  #   image: images.releases.hashicorp.com/hashicorp/terraform-enterprise:<vYYYYMM-#>
+  #   environment:
+  #     TFE_LICENSE: "<Hashicorp license>"
+  #     TFE_HOSTNAME: "<TFE hostname (DNS) e.g. terraform.example.com>"
+  #     TFE_ENCRYPTION_PASSWORD: '<Encryption password>'
+  #     TFE_OPERATIONAL_MODE: "disk"
+  #     TFE_DISK_CACHE_VOLUME_NAME: "${COMPOSE_PROJECT_NAME}_terraform-enterprise-cache"
+  #     TFE_TLS_CERT_FILE: "/etc/ssl/private/terraform-enterprise/cert.pem"
+  #     TFE_TLS_KEY_FILE: "/etc/ssl/private/terraform-enterprise/key.pem"
+  #     TFE_TLS_CA_BUNDLE_FILE: "/etc/ssl/private/terraform-enterprise/bundle.pem"
+  #     TFE_IACT_SUBNETS: "<IACT subnet, eg. 10.0.0.0/8,192.168.0.0/24>"
+  #   cap_add:
+  #     - IPC_LOCK
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp:mode=01777
+  #     - /run
+  #     - /var/log/terraform-enterprise
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - type: bind
+  #       source: /var/run/docker.sock
+  #       target: /run/docker.sock
+  #     - type: bind
+  #       source: ./certs
+  #       target: /etc/ssl/private/terraform-enterprise
+  #     - type: bind
+  #       source: <mounted_disk_path_on_host>
+  #       target: /var/lib/terraform-enterprise
+  #     - type: volume
+  #       source: terraform-enterprise-cache
+  #       target: /var/cache/tfe-task-worker/terraform
 
   # Secure with Vault
   vault:
@@ -220,74 +310,216 @@ services:
       - "${PGADMIN_PORT:-5050}:80"
     restart: unless-stopped
 
-
-  boundary-controller:
+  boundary:
     image: hashicorp/boundary:latest
-    container_name: boundary-controller
+    cap_add:
+      - IPC_LOCK
+    # network_mode: "bridge"
+    container_name: boundary
     command: ["server", "-config", "/boundary/boundary.hcl"]
     volumes:
-      - "${PWD}/../boundary/:/boundary/"
+      - "${PWD}/../boundary/controller.hcl:/boundary/boundary.hcl:ro,z"
     ports:
       - "9200:9200"
     environment:
       - BOUNDARY_PG_URL=postgresql://postgres:postgres@postgres/boundary?sslmode=disable
-      - HOSTNAME=boundary
     depends_on:
-      postgres-init:
-        condition: service_completed_successfully
+      - postgres-init
+      - auto
     healthcheck:
-      test: ["CMD", "wget", "-O-", "http://127.0.0.1:9200"]
+      test: ["CMD", "wget", "-O-", "http://127.0.0.1:9210"]
       interval: 3s
       timeout: 5s
       retries: 5
 
-
-  boundary-worker:
-    image: hashicorp/boundary:0.18.0
-    container_name: boundary-worker
+  boundary-worker-egress:
+    image: hashicorp/boundary:latest
+    cap_add:
+      - IPC_LOCK
+    # network_mode: "bridge"
+    container_name: boundary-worker-egress
     command: ["server", "-config", "/boundary/worker.hcl"]
     volumes:
-      - "${PWD}/../boundary/worker.hcl:/boundary/worker.hcl"
+      - "${PWD}/../boundary/worker.hcl:/boundary/worker.hcl:ro,z"
     ports:
-      - "9201:9201"
+      - "9210:9210"
     environment:
-      - BOUNDARY_PG_URL=postgresql://postgres:postgres@postgres/boundary?sslmode=disable
-      - HOSTNAME=boundary
+      - BOUNDARY_CONTROLLER_URL=http://boundary:9200
     depends_on:
-      - boundary-controller
+      - boundary
     healthcheck:
-      test: ["CMD", "wget", "-O-", "http://127.0.0.1:9201"]
+      test: ["CMD", "wget", "-O-", "http://127.0.0.1:9210"]
       interval: 3s
       timeout: 5s
       retries: 5
-# Boundary controller is the last service to start and may not be fully up
-# by the time the docker compose command returns, so we force a wait by
-# depending a placeholder on the controller healthcheck
+
+  boundary-worker-ingress:
+    image: hashicorp/boundary:latest
+    cap_add:
+      - IPC_LOCK
+    network_mode: "bridge"
+    container_name: boundary-worker-ingress
+    command: ["server", "-config", "/boundary/worker.hcl"]
+    volumes:
+      - "${PWD}/../boundary/worker.hcl:/boundary/worker.hcl:ro,z"
+    ports:
+      - "9211:9211"
+    environment:
+      - BOUNDARY_CONTROLLER_URL=http://boundary:9200
+    depends_on:
+      - boundary
+    healthcheck:
+      test: ["CMD", "wget", "-O-", "http://127.0.0.1:9211"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+      
   wait:
+    # Install database client tools into busybox
     image: busybox:latest
     container_name: busybox
     command: >
-      sh -c "apt-get install -y postgresql-client &&
-             psql -w -U postgres -d boundary -c SELECT &&
-             psql -w -U postgres -d boundary -c SELECT
-             "
+      sh -c "apt install -y postgresql-client &&
+            psql -w -U postgres -d boundary -c SELECT &&
+            curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc &&
+            curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list &&
+            apt update &&
+            apt install -y mssql-tools18 unixodbc-dev &&
+            echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' >> ~/.bash_profile &&
+            source ~/.bash_profile &&
+            echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' >> ~/.bashrc &&
+            source ~/.bashrc &&
+            echo "deb [signed-by=/etc/apt/keyrings/apache-cassandra.asc] https://debian.cassandra.apache.org 41x main" | sudo tee -a /etc/apt/sources.list.d/cassandra.sources.list &&
+            curl -o /etc/apt/keyrings/apache-cassandra.asc https://downloads.apache.org/cassandra/KEYS &&
+            apt update &&
+            apt install -y cassandra &&
+            apt install -y mariadb-client &&
+            apt install -y redis-tools
+            "
     depends_on:
-      - boundary-worker
+      - boundary
 
-# # Private Database Targets - not exposed to host network, only available via Boundary
-#   cassandra:
-#     image: bitnami/cassandra:latest
+  # Private Database Targets
+  cassandra:
+    container_name: cassandra
+    image: cassandra:3.11.9
+    ports:
+      - "9042:9042"
+    environment:
+      - "CASSANDRA_USER=admin"
+      - "CASSANDRA_PASSWORD=changeme"
+      - "MAX_HEAP_SIZE=256M"
+      - "HEAP_NEWSIZE=128M"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+      # - ./../databases/cassandra.yaml:/etc/cassandra/cassandra.yaml
 
-#   mysql:
-#     image: mariadb
-#     environment:
-#       - 'MYSQL_ROOT_PASSWORD=my-secret-pw'
+  mssql:
+    container_name: sql-server
+    image: mcr.microsoft.com/mssql/server:2017-latest
+    restart: always
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "Contraseña12345678"
+      MSSQL_PID: "Evaluation"
+    ports:
+      - 1433:1433
+    volumes:
+      - mssql-data:/var/opt/mssql
 
-#   redis:
-#     image: redis
+  mysql:
+    container_name: mysql
+    image: mariadb:lts
+    environment:
+      - 'MARIADB_ROOT_PASSWORD=changeme'
+    ports:
+      - 3306:3306
 
-#   mssql:
-#     image: mcr.microsoft.com/mssql/server:2017-CU8-ubuntu
-#     environment:
-#       - 'ACCEPT_EULA=Y'
-#       - 'SA_PASSWORD=yourStrong(!)Password'
+  oracle:
+    container_name: oracle
+    image: container-registry.oracle.com/database/enterprise:latest
+    environment:
+      - ORACLE_SID=ORCLCDB
+      - ORACLE_PDB=ORCLPDB1
+      - ORACLE_PWD=changeme
+    ports:
+      - 1521:1521
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - oracle-backup:/opt/oracle/backup
+    healthcheck:
+      test: ["CMD", "sqlplus", "-L", "sys/Oracle_123@//localhost:1521/ORCLCDB as sysdba", "@healthcheck.sql"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    container_name: redis
+    image: redis:latest
+    command: >
+      redis-server --requirepass changeme --protected-mode yes
+
+
+
+# starts 4 docker containers running minio server instances.
+# using nginx reverse proxy, load balancing, you can access
+# it through port 9000.
+  minio1:
+    <<: *minio-common
+    hostname: minio1
+    volumes:
+      - data1-1:/data1
+      - data1-2:/data2
+
+  minio2:
+    <<: *minio-common
+    hostname: minio2
+    volumes:
+      - data2-1:/data1
+      - data2-2:/data2
+
+  minio3:
+    <<: *minio-common
+    hostname: minio3
+    volumes:
+      - data3-1:/data1
+      - data3-2:/data2
+
+  minio4:
+    <<: *minio-common
+    hostname: minio4
+    volumes:
+      - data4-1:/data1
+      - data4-2:/data2
+
+  nginx:
+    image: nginx:1.19.2-alpine
+    hostname: nginx
+    volumes:
+      - ./../minio/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    depends_on:
+      - minio1
+      - minio2
+      - minio3
+      - minio4
+
+## By default this config uses default local driver,
+## For custom volumes replace with volume driver configuration.
+volumes:
+  cassandra-data:
+  data1-1:
+  data1-2:
+  data2-1:
+  data2-2:
+  data3-1:
+  data3-2:
+  data4-1:
+  data4-2:
+  grafana-data:
+  mssql-data:
+  oracle-backup:
+  oracle-data:
+  terraform-enterprise-cache:

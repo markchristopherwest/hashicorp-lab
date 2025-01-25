@@ -31,7 +31,7 @@ worker {
     type = ["boundary-worker"]
   }
 
-  initial_upstreams = ["boundary:9200"]
+  initial_upstreams = ["boundary-controller:9200"]
 }
 
 listener "tcp" {

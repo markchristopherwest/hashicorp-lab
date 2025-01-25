@@ -2,7 +2,7 @@
 
 resource "random_pet" "domain" {
   length = 2
-#   count  = length(var.users) / 2
+  #   count  = length(var.users) / 2
   separator = "."
 }
 
@@ -65,7 +65,7 @@ resource "vault_pki_secret_backend_intermediate_set_signed" "foo" {
 }
 
 resource "vault_pki_secret_backend_role" "foo_root" {
-  backend     = vault_mount.foo_root.path
+  backend          = vault_mount.foo_root.path
   name             = "my_admin"
   ttl              = 3600
   allow_ip_sans    = true
@@ -76,12 +76,12 @@ resource "vault_pki_secret_backend_role" "foo_root" {
 }
 
 resource "vault_pki_secret_backend_role" "foo_int" {
-  backend     = vault_mount.foo_intermediate.path
-  name             = "my_admin"
-  ttl              = 3600
-  allow_ip_sans    = true
-  key_type         = "rsa"
-  key_bits         = 4096
+  backend       = vault_mount.foo_intermediate.path
+  name          = "my_admin"
+  ttl           = 3600
+  allow_ip_sans = true
+  key_type      = "rsa"
+  key_bits      = 4096
   # allowed_domains  = ["${random_pet.domain.id}.com", "${random_pet.domain.id}.domain"]
   allow_subdomains = true
 }

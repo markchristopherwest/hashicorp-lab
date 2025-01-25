@@ -10,7 +10,7 @@ resource "vault_mount" "userpass" {
 
 # https://registry.terraform.io/providers/hashicorp/vault/latest/docs/resources/auth_backend#example-usage
 resource "vault_auth_backend" "userpass" {
-  type = "userpass"
+  type        = "userpass"
   description = "Auth Engine for Foo's UserPass creds"
   tune {
     max_lease_ttl      = "90000s"

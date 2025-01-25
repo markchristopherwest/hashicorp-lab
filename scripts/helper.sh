@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -eux
 
 sleep 5
 
@@ -47,11 +47,10 @@ vault operator unseal $UNSEAL_3
 export ROOT_TOKEN=${VAULT_TOKEN}
 cd ..
 cd scripts
-vault login ${ROOT_TOKEN} >> helper.log
+vault login ${ROOT_TOKEN} | tee helper.log
 
 # TF it
 cd /
 cd /terraform
 terraform init
-terraform plan -out=plan.json
 terraform apply -auto-approve
